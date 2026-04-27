@@ -6,6 +6,7 @@
 import SwiftUI
 import CoreLocation
 import Combine
+import MapKit
 
 //////////////////////////////////////////////////////////
 // MARK: Weather View
@@ -789,26 +790,172 @@ struct WeatherMapView: View {
     let latitude: Double
     let longitude: Double
     
+    @State private var isStandardMapStyle = true
+    @State private var cameraPosition: MapCameraPosition
+    @State private var selectedOverlay: WeatherOverlay = .temperature
+    @State private var showingOverlayOptions = false
+    
+    private var mapStyle: MapStyle {
+        isStandardMapStyle ? .standard : .hybrid
+    }
+    
+    init(latitude: Double, longitude: Double) {
+        self.latitude = latitude
+        self.longitude = longitude
+        _cameraPosition = State(initialValue: .region(
+            MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: latitude, longitude: longitude),
+                span: MKCoordinateSpan(latitudeDelta: 5.0, longitudeDelta: 5.0)
+            )
+        ))
+    }
+    
     var body: some View {
         NavigationStack {
             ZStack {
-                // Placeholder for weather map
-                // In a real app, you would integrate MapKit with weather overlays
-                Color.gray.opacity(0.2)
+                // Map with weather location
+                Map(position: $cameraPosition) {
+                    // Current location marker
+                    Annotation("Current Weather", coordinate: CLLocationCoordinate2D(latitude: latitude, longitude: longitude)) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.cyan.opacity(0.3))
+                                .frame(width: 60, height: 60)
+                            
+                            Circle()
+                                .fill(
+                                    LinearGradient(
+                                        colors: [.cyan, .blue],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                                .frame(width: 30, height: 30)
+                                .overlay(
+                                    Image(systemName: "cloud.sun.fill")
+                                        .font(.system(size: 16))
+                                        .foregroundColor(.white)
+                                )
+                                .shadow(color: .cyan.opacity(0.5), radius: 8)
+                        }
+                    }
+                }
+                .mapStyle(mapStyle)
+                .ignoresSafeArea()
                 
+                // Overlay controls
                 VStack {
-                    Text("Weather Map")
-                        .font(.title)
-                        .foregroundColor(.secondary)
+                    // Info banner
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Image(systemName: selectedOverlay.icon)
+                                .font(.title3)
+                                .foregroundColor(.cyan)
+                            
+                            Text(selectedOverlay.title)
+                                .font(.headline)
+                                .foregroundColor(.white)
+                            
+                            Spacer()
+                            
+                            Button {
+                                showingOverlayOptions.toggle()
+                            } label: {
+                                Image(systemName: "slider.horizontal.3")
+                                    .font(.title3)
+                                    .foregroundColor(.white)
+                                    .padding(8)
+                                    .background(
+                                        Circle()
+                                            .fill(Color.white.opacity(0.2))
+                                    )
+                            }
+                        }
+                        
+                        Text(selectedOverlay.description)
+                            .font(.caption)
+                            .foregroundColor(.white.opacity(0.7))
+                        
+                        // Color legend
+                        if selectedOverlay.showsLegend {
+                            HStack(spacing: 4) {
+                                ForEach(selectedOverlay.legendColors, id: \.self) { color in
+                                    Rectangle()
+                                        .fill(color)
+                                        .frame(height: 6)
+                                }
+                            }
+                            .cornerRadius(3)
+                            
+                            HStack {
+                                Text(selectedOverlay.legendMin)
+                                    .font(.caption2)
+                                Spacer()
+                                Text(selectedOverlay.legendMax)
+                                    .font(.caption2)
+                            }
+                            .foregroundColor(.white.opacity(0.6))
+                        }
+                    }
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(.ultraThinMaterial.opacity(0.8))
+                            .shadow(color: .black.opacity(0.2), radius: 10)
+                    )
+                    .padding()
                     
-                    Text("Location: \(String(format: "%.2f", latitude)), \(String(format: "%.2f", longitude))")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    Spacer()
                     
-                    Text("Weather overlay map would appear here")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .padding()
+                    // Bottom controls
+                    HStack(spacing: 12) {
+                        // Map style toggle
+                        Button {
+                            withAnimation {
+                                isStandardMapStyle.toggle()
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: isStandardMapStyle ? "map" : "globe.americas.fill")
+                                    .font(.system(size: 16))
+                                Text(isStandardMapStyle ? "Standard" : "Satellite")
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(
+                                Capsule()
+                                    .fill(.ultraThinMaterial.opacity(0.8))
+                            )
+                        }
+                        
+                        Spacer()
+                        
+                        // Recenter button
+                        Button {
+                            withAnimation {
+                                cameraPosition = .region(
+                                    MKCoordinateRegion(
+                                        center: CLLocationCoordinate2D(latitude: latitude, longitude: longitude),
+                                        span: MKCoordinateSpan(latitudeDelta: 5.0, longitudeDelta: 5.0)
+                                    )
+                                )
+                            }
+                        } label: {
+                            Image(systemName: "location.fill")
+                                .font(.system(size: 18))
+                                .foregroundColor(.white)
+                                .frame(width: 44, height: 44)
+                                .background(
+                                    Circle()
+                                        .fill(.cyan)
+                                        .shadow(color: .cyan.opacity(0.5), radius: 8)
+                                )
+                        }
+                    }
+                    .padding()
                 }
             }
             .navigationTitle("Weather Map")
@@ -818,9 +965,207 @@ struct WeatherMapView: View {
                     Button("Done") {
                         dismiss()
                     }
+                    .foregroundColor(.cyan)
+                }
+            }
+            .sheet(isPresented: $showingOverlayOptions) {
+                WeatherOverlayPicker(selectedOverlay: $selectedOverlay)
+                    .presentationDetents([.medium])
+            }
+        }
+    }
+}
+
+//////////////////////////////////////////////////////////
+// MARK: Weather Overlay Enum
+//////////////////////////////////////////////////////////
+
+enum WeatherOverlay: String, CaseIterable, Identifiable {
+    case temperature = "Temperature"
+    case precipitation = "Precipitation"
+    case wind = "Wind Speed"
+    case clouds = "Cloud Cover"
+    case pressure = "Pressure"
+    case humidity = "Humidity"
+    
+    var id: String { rawValue }
+    
+    var title: String { rawValue }
+    
+    var icon: String {
+        switch self {
+        case .temperature: return "thermometer.medium"
+        case .precipitation: return "cloud.rain.fill"
+        case .wind: return "wind"
+        case .clouds: return "cloud.fill"
+        case .pressure: return "gauge.with.dots.needle.50percent"
+        case .humidity: return "humidity.fill"
+        }
+    }
+    
+    var description: String {
+        switch self {
+        case .temperature: return "Current temperature across the region"
+        case .precipitation: return "Rainfall and snow accumulation"
+        case .wind: return "Wind speed and direction patterns"
+        case .clouds: return "Cloud coverage percentage"
+        case .pressure: return "Atmospheric pressure systems"
+        case .humidity: return "Relative humidity levels"
+        }
+    }
+    
+    var showsLegend: Bool { true }
+    
+    var legendColors: [Color] {
+        switch self {
+        case .temperature:
+            return [.blue, .cyan, .green, .yellow, .orange, .red]
+        case .precipitation:
+            return [.clear, .blue.opacity(0.3), .blue.opacity(0.6), .blue, .purple]
+        case .wind:
+            return [.white.opacity(0.2), .cyan.opacity(0.4), .cyan, .blue, .purple]
+        case .clouds:
+            return [.clear, .white.opacity(0.3), .white.opacity(0.6), .white, .gray]
+        case .pressure:
+            return [.purple, .blue, .cyan, .green, .yellow, .orange]
+        case .humidity:
+            return [.yellow.opacity(0.3), .green.opacity(0.5), .cyan, .blue]
+        }
+    }
+    
+    var legendMin: String {
+        switch self {
+        case .temperature: return "Cold"
+        case .precipitation: return "None"
+        case .wind: return "Calm"
+        case .clouds: return "Clear"
+        case .pressure: return "Low"
+        case .humidity: return "Dry"
+        }
+    }
+    
+    var legendMax: String {
+        switch self {
+        case .temperature: return "Hot"
+        case .precipitation: return "Heavy"
+        case .wind: return "Strong"
+        case .clouds: return "Overcast"
+        case .pressure: return "High"
+        case .humidity: return "Humid"
+        }
+    }
+}
+
+//////////////////////////////////////////////////////////
+// MARK: Weather Overlay Picker
+//////////////////////////////////////////////////////////
+
+struct WeatherOverlayPicker: View {
+    @Environment(\.dismiss) private var dismiss
+    @Binding var selectedOverlay: WeatherOverlay
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color(red: 0.1, green: 0.1, blue: 0.15)
+                    .ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(spacing: 12) {
+                        ForEach(WeatherOverlay.allCases) { overlay in
+                            OverlayOptionButton(
+                                overlay: overlay,
+                                isSelected: selectedOverlay == overlay
+                            ) {
+                                selectedOverlay = overlay
+                                dismiss()
+                            }
+                        }
+                    }
+                    .padding()
+                }
+            }
+            .navigationTitle("Weather Layers")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .foregroundColor(.cyan)
                 }
             }
         }
+    }
+}
+
+//////////////////////////////////////////////////////////
+// MARK: Overlay Option Button
+//////////////////////////////////////////////////////////
+
+struct OverlayOptionButton: View {
+    let overlay: WeatherOverlay
+    let isSelected: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 16) {
+                // Icon
+                overlayIcon
+                
+                // Info
+                overlayInfo
+                
+                Spacer()
+                
+                // Checkmark
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.title2)
+                        .foregroundColor(.cyan)
+                }
+            }
+            .padding()
+            .background(backgroundView)
+        }
+    }
+    
+    private var overlayIcon: some View {
+        ZStack {
+            Circle()
+                .fill(isSelected ? Color.cyan.opacity(0.3) : Color.white.opacity(0.1))
+                .frame(width: 50, height: 50)
+            
+            Image(systemName: overlay.icon)
+                .font(.title2)
+                .foregroundColor(isSelected ? .cyan : .white.opacity(0.7))
+        }
+    }
+    
+    private var overlayInfo: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(overlay.title)
+                .font(.headline)
+                .foregroundColor(.white)
+            
+            Text(overlay.description)
+                .font(.caption)
+                .foregroundColor(.white.opacity(0.6))
+                .lineLimit(2)
+        }
+    }
+    
+    private var backgroundView: some View {
+        RoundedRectangle(cornerRadius: 16)
+            .fill(isSelected ? Color.white.opacity(0.1) : Color.white.opacity(0.05))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(
+                        isSelected ? Color.cyan.opacity(0.5) : Color.white.opacity(0.1),
+                        lineWidth: 1
+                    )
+            )
     }
 }
 
