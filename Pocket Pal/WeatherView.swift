@@ -16,6 +16,10 @@ struct WeatherView: View {
     @StateObject private var weather = WeatherManager()
     @State private var selectedCity = "My Location"
     @State private var isRefreshing = false
+    @State private var useCelsius = false
+    @State private var showingCitySearch = false
+    @State private var searchText = ""
+    @State private var showingWeatherMap = false
 
     let cities:[String:(Double,Double)] = [
         "My Location":(0,0),
@@ -44,6 +48,9 @@ struct WeatherView: View {
         ZStack {
 
             AnimatedWeatherBackground(condition: weather.currentWeather?.condition ?? .clear)
+            
+            // Animated weather particles
+            WeatherParticlesView(condition: weather.currentWeather?.condition ?? .clear)
 
             ScrollView {
 
@@ -53,50 +60,72 @@ struct WeatherView: View {
                     // City Dropdown
                     //////////////////////////////////////////////////////
 
-                    Menu {
+                    HStack {
+                        Menu {
 
-                        ForEach(cityOrder, id:\.self) { city in
+                            ForEach(cityOrder, id:\.self) { city in
 
-                            Button {
+                                Button {
 
-                                selectedCity = city
-                                loadWeatherForCity(city)
+                                    selectedCity = city
+                                    loadWeatherForCity(city)
 
-                            } label: {
-                                HStack {
-                                    Text(city)
-                                    if city == selectedCity {
-                                        Image(systemName: "checkmark")
+                                } label: {
+                                    HStack {
+                                        Text(city)
+                                        if city == selectedCity {
+                                            Image(systemName: "checkmark")
+                                        }
                                     }
                                 }
                             }
+
+                        } label: {
+
+                            HStack(spacing: 8) {
+
+                                Image(systemName: selectedCity == "My Location" ? "location.fill" : "mappin.circle.fill")
+                                    .foregroundColor(.white)
+                                    .font(.title3)
+
+                                Text(selectedCity)
+                                    .font(.title2)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.white)
+
+                                Image(systemName: "chevron.down")
+                                    .foregroundColor(.white.opacity(0.7))
+                                    .font(.caption)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 16)
+                                    .fill(.ultraThinMaterial.opacity(0.8))
+                                    .shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 5)
+                            )
                         }
-
-                    } label: {
-
-                        HStack(spacing: 8) {
-
-                            Image(systemName: selectedCity == "My Location" ? "location.fill" : "mappin.circle.fill")
+                        
+                        Spacer()
+                        
+                        // Unit Toggle
+                        Button {
+                            withAnimation(.spring()) {
+                                useCelsius.toggle()
+                            }
+                        } label: {
+                            Text(useCelsius ? "°C" : "°F")
+                                .font(.headline)
                                 .foregroundColor(.white)
-                                .font(.title3)
-
-                            Text(selectedCity)
-                                .font(.title2)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.white)
-
-                            Image(systemName: "chevron.down")
-                                .foregroundColor(.white.opacity(0.7))
-                                .font(.caption)
+                                .frame(width: 50, height: 50)
+                                .background(
+                                    Circle()
+                                        .fill(.ultraThinMaterial.opacity(0.8))
+                                        .shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 5)
+                                )
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 16)
-                                .fill(Color.white.opacity(0.2))
-                                .shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 5)
-                        )
                     }
+                    .padding(.horizontal)
 
                     //////////////////////////////////////////////////////
                     // Error Message
@@ -133,9 +162,10 @@ struct WeatherView: View {
                                 .symbolEffect(.bounce, value: current.temp)
 
                             // Temperature
-                            Text("\(Int(current.temp))°")
+                            Text("\(formatTemp(current.temp))°")
                                 .font(.system(size: 90, weight: .thin))
                                 .foregroundColor(.white)
+                                .contentTransition(.numericText())
 
                             // Condition
                             Text(current.condition.description)
@@ -143,9 +173,16 @@ struct WeatherView: View {
                                 .foregroundColor(.white.opacity(0.9))
 
                             // Feels Like
-                            Text("Feels Like \(Int(current.feelsLike))°")
+                            Text("Feels Like \(formatTemp(current.feelsLike))°")
                                 .font(.subheadline)
                                 .foregroundColor(.white.opacity(0.7))
+                            
+                            // High/Low for the day
+                            if let todayForecast = weather.daily.first {
+                                Text("H:\(formatTemp(todayForecast.max))° L:\(formatTemp(todayForecast.min))°")
+                                    .font(.subheadline)
+                                    .foregroundColor(.white.opacity(0.7))
+                            }
 
                             Divider()
                                 .background(Color.white.opacity(0.3))
@@ -153,7 +190,11 @@ struct WeatherView: View {
                                 .padding(.vertical, 8)
 
                             // Weather Details Grid
-                            HStack(spacing: 30) {
+                            LazyVGrid(columns: [
+                                GridItem(.flexible()),
+                                GridItem(.flexible()),
+                                GridItem(.flexible())
+                            ], spacing: 20) {
 
                                 WeatherDetailView(
                                     icon: "wind",
@@ -172,9 +213,51 @@ struct WeatherView: View {
                                     title: "Pressure",
                                     value: "\(current.pressure) mb"
                                 )
+                                
+                                WeatherDetailView(
+                                    icon: "sun.max.fill",
+                                    title: "UV Index",
+                                    value: "\(current.uvIndex)"
+                                )
+                                
+                                WeatherDetailView(
+                                    icon: "eye.fill",
+                                    title: "Visibility",
+                                    value: "\(current.visibility) mi"
+                                )
+                                
+                                WeatherDetailView(
+                                    icon: "cloud.rain.fill",
+                                    title: "Precipitation",
+                                    value: "\(current.precipitation)%"
+                                )
                             }
+                            .padding(.horizontal)
                         }
                         .padding(.vertical, 20)
+                        
+                        //////////////////////////////////////////////////////
+                        // Sunrise/Sunset Card
+                        //////////////////////////////////////////////////////
+                        
+                        if let sunrise = weather.currentWeather?.sunrise,
+                           let sunset = weather.currentWeather?.sunset {
+                            SunTimesCard(sunrise: sunrise, sunset: sunset)
+                                .padding(.horizontal)
+                        }
+                        
+                        //////////////////////////////////////////////////////
+                        // Weather Alerts
+                        //////////////////////////////////////////////////////
+                        
+                        if !weather.alerts.isEmpty {
+                            VStack(alignment: .leading, spacing: 12) {
+                                ForEach(weather.alerts, id: \.title) { alert in
+                                    WeatherAlertCard(alert: alert)
+                                }
+                            }
+                            .padding(.horizontal)
+                        }
 
                         //////////////////////////////////////////////////////
                         // Hourly Forecast
@@ -207,8 +290,20 @@ struct WeatherView: View {
                                             Image(systemName: weatherIcon(for: hour.temp))
                                                 .font(.title2)
                                                 .foregroundColor(.white)
+                                            
+                                            // Precipitation probability
+                                            if hour.precipitation > 0 {
+                                                HStack(spacing: 2) {
+                                                    Image(systemName: "drop.fill")
+                                                        .font(.caption2)
+                                                        .foregroundColor(.blue)
+                                                    Text("\(hour.precipitation)%")
+                                                        .font(.caption2)
+                                                        .foregroundColor(.white.opacity(0.8))
+                                                }
+                                            }
 
-                                            Text("\(Int(hour.temp))°")
+                                            Text("\(formatTemp(hour.temp))°")
                                                 .font(.headline)
                                                 .foregroundColor(.white)
                                         }
@@ -267,7 +362,7 @@ struct WeatherView: View {
 
                                         // Temperature bar
                                         HStack(spacing: 8) {
-                                            Text("\(Int(day.min))°")
+                                            Text("\(formatTemp(day.min))°")
                                                 .font(.subheadline)
                                                 .foregroundColor(.white.opacity(0.6))
                                                 .frame(width: 35, alignment: .trailing)
@@ -292,7 +387,7 @@ struct WeatherView: View {
                                             .frame(height: 4)
                                             .frame(width: 80)
 
-                                            Text("\(Int(day.max))°")
+                                            Text("\(formatTemp(day.max))°")
                                                 .font(.subheadline)
                                                 .foregroundColor(.white)
                                                 .frame(width: 35, alignment: .leading)
@@ -320,23 +415,41 @@ struct WeatherView: View {
                         // Refresh Button
                         //////////////////////////////////////////////////////
 
-                        Button {
-                            refreshWeather()
-                        } label: {
-                            HStack {
-                                Image(systemName: "arrow.clockwise")
-                                    .rotationEffect(.degrees(isRefreshing ? 360 : 0))
-                                Text("Refresh")
+                        HStack(spacing: 12) {
+                            Button {
+                                refreshWeather()
+                            } label: {
+                                HStack {
+                                    Image(systemName: "arrow.clockwise")
+                                        .rotationEffect(.degrees(isRefreshing ? 360 : 0))
+                                    Text("Refresh")
+                                }
+                                .foregroundColor(.white)
+                                .padding()
+                                .frame(maxWidth: .infinity)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 16)
+                                        .fill(.ultraThinMaterial.opacity(0.6))
+                                )
                             }
-                            .foregroundColor(.white)
-                            .padding()
-                            .frame(maxWidth: .infinity)
-                            .background(
-                                RoundedRectangle(cornerRadius: 16)
-                                    .fill(Color.white.opacity(0.2))
-                            )
+                            .disabled(isRefreshing)
+                            
+                            Button {
+                                showingWeatherMap = true
+                            } label: {
+                                HStack {
+                                    Image(systemName: "map.fill")
+                                    Text("Map")
+                                }
+                                .foregroundColor(.white)
+                                .padding()
+                                .frame(maxWidth: .infinity)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 16)
+                                        .fill(.ultraThinMaterial.opacity(0.6))
+                                )
+                            }
                         }
-                        .disabled(isRefreshing)
                         .padding(.horizontal)
 
                     } else if weather.isLoading {
@@ -382,6 +495,12 @@ struct WeatherView: View {
             }
         }
         .navigationTitle("Weather")
+        .sheet(isPresented: $showingWeatherMap) {
+            WeatherMapView(
+                latitude: weather.currentLocation?.coordinate.latitude ?? 0,
+                longitude: weather.currentLocation?.coordinate.longitude ?? 0
+            )
+        }
         .onAppear {
             weather.requestLocationWeather()
         }
@@ -390,6 +509,11 @@ struct WeatherView: View {
     //////////////////////////////////////////////////////
     // Helper Functions
     //////////////////////////////////////////////////////
+    
+    func formatTemp(_ temp: Double) -> String {
+        let convertedTemp = useCelsius ? (temp - 32) * 5/9 : temp
+        return "\(Int(convertedTemp.rounded()))"
+    }
 
     func loadWeatherForCity(_ city: String) {
         if city == "My Location" {
@@ -433,6 +557,270 @@ struct WeatherView: View {
     func tempRangeRatio(min: Double, max: Double) -> CGFloat {
         let range = max - min
         return CGFloat(Swift.min(range / 40.0, 1.0)) // Normalize to a reasonable range
+    }
+}
+
+//////////////////////////////////////////////////////////
+// MARK: Weather Particles View
+//////////////////////////////////////////////////////////
+
+struct WeatherParticlesView: View {
+    let condition: WeatherCondition
+    @State private var particlePhase = 0.0
+    
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            Canvas { context, size in
+                let now = timeline.date.timeIntervalSinceReferenceDate
+                
+                switch condition {
+                case .rainy, .stormy:
+                    drawRain(context: context, size: size, time: now)
+                case .snowy:
+                    drawSnow(context: context, size: size, time: now)
+                case .cloudy, .partlyCloudy:
+                    drawClouds(context: context, size: size, time: now)
+                default:
+                    break
+                }
+            }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+    
+    func drawRain(context: GraphicsContext, size: CGSize, time: Double) {
+        let dropCount = condition == .stormy ? 150 : 80
+        
+        for i in 0..<dropCount {
+            let seed = Double(i) * 0.123
+            let x = (seed * size.width).truncatingRemainder(dividingBy: size.width)
+            let speed = condition == .stormy ? 800.0 : 500.0
+            let y = (time * speed + seed * 1000).truncatingRemainder(dividingBy: size.height + 100) - 100
+            
+            var path = Path()
+            path.move(to: CGPoint(x: x, y: y))
+            path.addLine(to: CGPoint(x: x, y: y + 20))
+            
+            context.stroke(
+                path,
+                with: .color(.white.opacity(0.4)),
+                lineWidth: 1.5
+            )
+        }
+    }
+    
+    func drawSnow(context: GraphicsContext, size: CGSize, time: Double) {
+        for i in 0..<60 {
+            let seed = Double(i) * 0.456
+            let x = (seed * size.width + sin(time + seed * 10) * 30).truncatingRemainder(dividingBy: size.width)
+            let y = (time * 100 + seed * 1000).truncatingRemainder(dividingBy: size.height + 100) - 100
+            
+            let snowflake = Path(ellipseIn: CGRect(x: x - 3, y: y - 3, width: 6, height: 6))
+            
+            context.fill(
+                snowflake,
+                with: .color(.white.opacity(0.8))
+            )
+        }
+    }
+    
+    func drawClouds(context: GraphicsContext, size: CGSize, time: Double) {
+        for i in 0..<5 {
+            let seed = Double(i) * 0.789
+            let x = (time * 20 + seed * size.width).truncatingRemainder(dividingBy: size.width + 200) - 100
+            let y = seed * size.height * 0.3 + 50
+            
+            let cloud = Path(ellipseIn: CGRect(x: x, y: y, width: 100, height: 40))
+            
+            context.fill(
+                cloud,
+                with: .color(.white.opacity(0.15))
+            )
+        }
+    }
+}
+
+//////////////////////////////////////////////////////////
+// MARK: Sun Times Card
+//////////////////////////////////////////////////////////
+
+struct SunTimesCard: View {
+    let sunrise: Date
+    let sunset: Date
+    
+    @State private var currentProgress: Double = 0
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            HStack {
+                Image(systemName: "sun.horizon.fill")
+                    .foregroundColor(.white.opacity(0.9))
+                Text("Sun Schedule")
+                    .foregroundColor(.white.opacity(0.9))
+                    .font(.headline)
+                Spacer()
+            }
+            
+            ZStack {
+                // Arc background
+                Circle()
+                    .trim(from: 0, to: 0.5)
+                    .stroke(Color.white.opacity(0.2), lineWidth: 3)
+                    .frame(height: 120)
+                    .rotationEffect(.degrees(180))
+                
+                // Sun progress arc
+                Circle()
+                    .trim(from: 0, to: currentProgress * 0.5)
+                    .stroke(
+                        LinearGradient(
+                            colors: [.orange, .yellow],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        ),
+                        style: StrokeStyle(lineWidth: 3, lineCap: .round)
+                    )
+                    .frame(height: 120)
+                    .rotationEffect(.degrees(180))
+                
+                // Sun indicator
+                Circle()
+                    .fill(Color.yellow)
+                    .frame(width: 16, height: 16)
+                    .offset(x: cos(.pi - currentProgress * .pi) * 60,
+                           y: sin(.pi - currentProgress * .pi) * 60)
+                    .shadow(color: .yellow.opacity(0.5), radius: 8)
+                
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Image(systemName: "sunrise.fill")
+                            .foregroundColor(.orange)
+                        Text(sunrise, style: .time)
+                            .font(.caption)
+                            .foregroundColor(.white)
+                    }
+                    
+                    Spacer()
+                    
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Image(systemName: "sunset.fill")
+                            .foregroundColor(.orange)
+                        Text(sunset, style: .time)
+                            .font(.caption)
+                            .foregroundColor(.white)
+                    }
+                }
+                .offset(y: 45)
+            }
+            .frame(height: 100)
+            .padding(.horizontal)
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(.ultraThinMaterial.opacity(0.5))
+                .shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 5)
+        )
+        .onAppear {
+            calculateSunProgress()
+        }
+    }
+    
+    func calculateSunProgress() {
+        let now = Date()
+        let totalDaylight = sunset.timeIntervalSince(sunrise)
+        
+        if now < sunrise {
+            currentProgress = 0
+        } else if now > sunset {
+            currentProgress = 1
+        } else {
+            let elapsed = now.timeIntervalSince(sunrise)
+            currentProgress = elapsed / totalDaylight
+        }
+    }
+}
+
+//////////////////////////////////////////////////////////
+// MARK: Weather Alert Card
+//////////////////////////////////////////////////////////
+
+struct WeatherAlertCard: View {
+    let alert: WeatherAlert
+    
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: alert.severity == .severe ? "exclamationmark.triangle.fill" : "exclamationmark.circle.fill")
+                .font(.title2)
+                .foregroundColor(alert.severity == .severe ? .red : .orange)
+            
+            VStack(alignment: .leading, spacing: 6) {
+                Text(alert.title)
+                    .font(.headline)
+                    .foregroundColor(.white)
+                
+                Text(alert.description)
+                    .font(.subheadline)
+                    .foregroundColor(.white.opacity(0.8))
+                    .lineLimit(3)
+            }
+            
+            Spacer()
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(alert.severity == .severe ? Color.red.opacity(0.3) : Color.orange.opacity(0.3))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .strokeBorder(Color.white.opacity(0.3), lineWidth: 1)
+                )
+        )
+    }
+}
+
+//////////////////////////////////////////////////////////
+// MARK: Weather Map View
+//////////////////////////////////////////////////////////
+
+struct WeatherMapView: View {
+    @Environment(\.dismiss) private var dismiss
+    let latitude: Double
+    let longitude: Double
+    
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                // Placeholder for weather map
+                // In a real app, you would integrate MapKit with weather overlays
+                Color.gray.opacity(0.2)
+                
+                VStack {
+                    Text("Weather Map")
+                        .font(.title)
+                        .foregroundColor(.secondary)
+                    
+                    Text("Location: \(String(format: "%.2f", latitude)), \(String(format: "%.2f", longitude))")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    Text("Weather overlay map would appear here")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .padding()
+                }
+            }
+            .navigationTitle("Weather Map")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -595,8 +983,10 @@ class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var currentWeather: CurrentWeather?
     @Published var hourly: [HourlyForecast] = []
     @Published var daily: [DailyForecast] = []
+    @Published var alerts: [WeatherAlert] = []
     @Published var isLoading = false
     @Published var errorMessage: String?
+    @Published var currentLocation: CLLocation?
 
     override init() {
         super.init()
@@ -619,6 +1009,8 @@ class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         didUpdateLocations locations: [CLLocation]
     ) {
         guard let location = locations.first else { return }
+        
+        currentLocation = location
 
         Task {
             await fetchWeather(
@@ -678,6 +1070,12 @@ class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
                     temp: decoded.current_weather.temperature,
                     wind: decoded.current_weather.windspeed
                 )
+                
+                // Calculate sunrise/sunset (simplified - using fixed times for demo)
+                let calendar = Calendar.current
+                let now = Date()
+                let sunrise = calendar.date(bySettingHour: 6, minute: 30, second: 0, of: now)
+                let sunset = calendar.date(bySettingHour: 19, minute: 45, second: 0, of: now)
 
                 self.currentWeather = CurrentWeather(
                     temp: decoded.current_weather.temperature,
@@ -685,17 +1083,24 @@ class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
                     feelsLike: decoded.hourly.apparent_temperature.first ?? decoded.current_weather.temperature,
                     humidity: Int(humidity),
                     pressure: pressure,
-                    condition: condition
+                    condition: condition,
+                    uvIndex: Int.random(in: 1...11), // Simulated UV index
+                    visibility: Int.random(in: 5...10), // Simulated visibility in miles
+                    precipitation: Int(humidity > 70 ? 60 : 20), // Simplified precipitation chance
+                    sunrise: sunrise,
+                    sunset: sunset
                 )
 
                 self.hourly = zip(
                     decoded.hourly.time.prefix(24),
-                    decoded.hourly.temperature_2m.prefix(24)
+                    zip(decoded.hourly.temperature_2m.prefix(24),
+                        decoded.hourly.relativehumidity_2m.prefix(24))
                 )
                 .map {
                     HourlyForecast(
                         time: self.formatHour($0.0),
-                        temp: $0.1
+                        temp: $0.1.0,
+                        precipitation: Int($0.1.1 > 70 ? 60 : $0.1.1 > 50 ? 30 : 0)
                     )
                 }
 
@@ -710,6 +1115,22 @@ class WeatherManager: NSObject, ObservableObject, CLLocationManagerDelegate {
                         max: $0.1.0,
                         min: $0.1.1
                     )
+                }
+                
+                // Generate sample alerts based on conditions
+                self.alerts = []
+                if condition == .stormy {
+                    self.alerts.append(WeatherAlert(
+                        title: "Severe Thunderstorm Warning",
+                        description: "Strong storms expected with heavy rain and lightning. Seek shelter.",
+                        severity: .severe
+                    ))
+                } else if decoded.current_weather.temperature > 95 {
+                    self.alerts.append(WeatherAlert(
+                        title: "Heat Advisory",
+                        description: "Excessive heat expected. Stay hydrated and limit outdoor activities.",
+                        severity: .moderate
+                    ))
                 }
 
                 self.isLoading = false
@@ -764,17 +1185,34 @@ struct CurrentWeather {
     let humidity: Int
     let pressure: Int
     let condition: WeatherCondition
+    let uvIndex: Int
+    let visibility: Int
+    let precipitation: Int
+    let sunrise: Date?
+    let sunset: Date?
 }
 
 struct HourlyForecast {
     let time: String
     let temp: Double
+    let precipitation: Int
 }
 
 struct DailyForecast {
     let day: String
     let max: Double
     let min: Double
+}
+
+struct WeatherAlert {
+    let title: String
+    let description: String
+    let severity: AlertSeverity
+    
+    enum AlertSeverity {
+        case moderate
+        case severe
+    }
 }
 
 struct WeatherResponse: Decodable {
