@@ -794,6 +794,9 @@ struct WeatherMapView: View {
     @State private var cameraPosition: MapCameraPosition
     @State private var selectedOverlay: WeatherOverlay = .temperature
     @State private var showingOverlayOptions = false
+    @State private var showingNavigationOptions = false
+    @State private var route: MKRoute?
+    @State private var isCalculatingRoute = false
     
     private var mapStyle: MapStyle {
         isStandardMapStyle ? .standard : .hybrid
@@ -838,6 +841,12 @@ struct WeatherMapView: View {
                                 )
                                 .shadow(color: .cyan.opacity(0.5), radius: 8)
                         }
+                    }
+                    
+                    // Show route if available
+                    if let route = route {
+                        MapPolyline(route.polyline)
+                            .stroke(.blue, lineWidth: 5)
                     }
                 }
                 .mapStyle(mapStyle)
@@ -896,6 +905,29 @@ struct WeatherMapView: View {
                             }
                             .foregroundColor(.white.opacity(0.6))
                         }
+                        
+                        // Route info if available
+                        if let route = route {
+                            Divider()
+                                .background(Color.white.opacity(0.3))
+                            
+                            HStack(spacing: 12) {
+                                Image(systemName: "car.fill")
+                                    .foregroundColor(.cyan)
+                                
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(formatDistance(route.distance))
+                                        .font(.headline)
+                                        .foregroundColor(.white)
+                                    
+                                    Text(formatDuration(route.expectedTravelTime))
+                                        .font(.caption)
+                                        .foregroundColor(.white.opacity(0.7))
+                                }
+                                
+                                Spacer()
+                            }
+                        }
                     }
                     .padding()
                     .background(
@@ -933,6 +965,27 @@ struct WeatherMapView: View {
                         
                         Spacer()
                         
+                        // Navigate button
+                        Button {
+                            showingNavigationOptions = true
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "location.north.fill")
+                                    .font(.system(size: 16))
+                                Text("Navigate")
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(
+                                Capsule()
+                                    .fill(.cyan)
+                                    .shadow(color: .cyan.opacity(0.5), radius: 8)
+                            )
+                        }
+                        
                         // Recenter button
                         Button {
                             withAnimation {
@@ -950,12 +1003,28 @@ struct WeatherMapView: View {
                                 .frame(width: 44, height: 44)
                                 .background(
                                     Circle()
-                                        .fill(.cyan)
-                                        .shadow(color: .cyan.opacity(0.5), radius: 8)
+                                        .fill(.ultraThinMaterial.opacity(0.8))
                                 )
                         }
                     }
                     .padding()
+                }
+                
+                // Loading indicator for route calculation
+                if isCalculatingRoute {
+                    VStack {
+                        ProgressView()
+                            .scaleEffect(1.5)
+                            .tint(.cyan)
+                        Text("Calculating route...")
+                            .font(.caption)
+                            .foregroundColor(.white)
+                    }
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(.ultraThinMaterial.opacity(0.9))
+                    )
                 }
             }
             .navigationTitle("Weather Map")
@@ -972,6 +1041,95 @@ struct WeatherMapView: View {
                 WeatherOverlayPicker(selectedOverlay: $selectedOverlay)
                     .presentationDetents([.medium])
             }
+            .confirmationDialog("Choose Navigation App", isPresented: $showingNavigationOptions) {
+                Button("Apple Maps") {
+                    openInAppleMaps()
+                }
+                
+                Button("Show Route Preview") {
+                    calculateRoute()
+                }
+                
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Get directions to this weather location")
+            }
+        }
+    }
+    
+    // MARK: - Navigation Functions
+    
+    private func openInAppleMaps() {
+        let coordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        let placemark = MKPlacemark(coordinate: coordinate)
+        let mapItem = MKMapItem(placemark: placemark)
+        mapItem.name = "Weather Location"
+        
+        let launchOptions = [
+            MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeDriving
+        ]
+        
+        mapItem.openInMaps(launchOptions: launchOptions)
+    }
+    
+    private func calculateRoute() {
+        isCalculatingRoute = true
+        
+        Task {
+            let destinationCoordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+            
+            // Create request for directions
+            let request = MKDirections.Request()
+            request.destination = MKMapItem(placemark: MKPlacemark(coordinate: destinationCoordinate))
+            request.source = MKMapItem.forCurrentLocation()
+            request.transportType = .automobile
+            request.requestsAlternateRoutes = false
+            
+            let directions = MKDirections(request: request)
+            
+            do {
+                let response = try await directions.calculate()
+                
+                await MainActor.run {
+                    if let route = response.routes.first {
+                        self.route = route
+                        
+                        // Adjust camera to show the route
+                        let rect = route.polyline.boundingMapRect
+                        let region = MKCoordinateRegion(rect)
+                        
+                        withAnimation {
+                            cameraPosition = .region(region)
+                        }
+                    }
+                    isCalculatingRoute = false
+                }
+            } catch {
+                await MainActor.run {
+                    print("Error calculating route: \(error)")
+                    isCalculatingRoute = false
+                }
+            }
+        }
+    }
+    
+    private func formatDistance(_ meters: CLLocationDistance) -> String {
+        let miles = meters / 1609.34
+        if miles < 0.1 {
+            return String(format: "%.0f ft", meters * 3.28084)
+        } else {
+            return String(format: "%.1f mi", miles)
+        }
+    }
+    
+    private func formatDuration(_ seconds: TimeInterval) -> String {
+        let hours = Int(seconds) / 3600
+        let minutes = (Int(seconds) % 3600) / 60
+        
+        if hours > 0 {
+            return "\(hours)h \(minutes)m"
+        } else {
+            return "\(minutes)m"
         }
     }
 }
