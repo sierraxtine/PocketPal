@@ -1,3 +1,4 @@
+// TEST CHANGE 123
 import SwiftUI
 import MapKit
 import CoreLocation
@@ -30,6 +31,11 @@ struct MapsView: View {
     
     @State private var selectedCategory: PlaceCategory?
     @State private var isSearching = false
+    
+    @State private var isNavigating = false
+    @State private var navigationSteps: [MKRoute.Step] = []
+    @State private var currentStepIndex = 0
+    @State private var showNavigationPanel = false
     
     @FocusState private var isSearchFocused: Bool
     
@@ -82,7 +88,7 @@ struct MapsView: View {
                 
                 // Search results
                 ForEach(results, id: \.self) { item in
-                    let coordinate = item.placemark.coordinate
+                    let coordinate = item.location.coordinate
                     Annotation(item.name ?? "Place", coordinate: coordinate) {
                         VStack(spacing: 4) {
                             ZStack {
@@ -130,8 +136,8 @@ struct MapsView: View {
                             withAnimation(.spring(response: 0.3)) {
                                 let item = MKMapItem()
                                 item.name = location.name
-                                item.setValue(CLLocation(latitude: location.coordinate.latitude, 
-                                                        longitude: location.coordinate.longitude), 
+                                item.setValue(CLLocation(latitude: location.coordinate.latitude,
+                                                        longitude: location.coordinate.longitude),
                                             forKey: "location")
                                 selectedItem = item
                                 showingDetail = true
@@ -423,6 +429,36 @@ struct MapsView: View {
                         }
                 )
             }
+            
+            //////////////////////////////////////////////////////////
+            // NAVIGATION PANEL
+            //////////////////////////////////////////////////////////
+            
+            if showNavigationPanel && isNavigating {
+                VStack {
+                    NavigationPanel(
+                        route: route,
+                        steps: navigationSteps,
+                        currentStepIndex: $currentStepIndex,
+                        onEndNavigation: {
+                            endNavigation()
+                        },
+                        onNextStep: {
+                            if currentStepIndex < navigationSteps.count - 1 {
+                                currentStepIndex += 1
+                            }
+                        },
+                        onPreviousStep: {
+                            if currentStepIndex > 0 {
+                                currentStepIndex -= 1
+                            }
+                        }
+                    )
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    
+                    Spacer()
+                }
+            }
         }
         .sheet(isPresented: $showFavorites) {
             FavoritesMapView(favorites: $favoriteLocations) { location in
@@ -485,7 +521,7 @@ struct MapsView: View {
                     self.results = response.mapItems
                     
                     if let first = response.mapItems.first {
-                        let coordinate = first.placemark.coordinate
+                        let coordinate = first.location.coordinate
                         self.cameraPosition = .region(
                             MKCoordinateRegion(
                                 center: coordinate,
@@ -543,6 +579,8 @@ struct MapsView: View {
         // Create source MKMapItem from user's location
         let sourcePlacemark = MKPlacemark(coordinate: userLocation.coordinate)
         let sourceItem = MKMapItem(placemark: sourcePlacemark)
+        sourceItem.name = "My Location"
+        
         request.source = sourceItem
         request.destination = item
         request.transportType = .automobile
@@ -555,6 +593,13 @@ struct MapsView: View {
             withAnimation {
                 self.route = route
                 showingRoute = true
+                showingDetail = false
+                
+                // Store navigation steps
+                self.navigationSteps = route.steps
+                self.currentStepIndex = 0
+                self.isNavigating = true
+                self.showNavigationPanel = true
                 
                 // Adjust camera to show entire route
                 let coordinates = route.polyline.coordinates
@@ -570,15 +615,30 @@ struct MapsView: View {
     }
     
     //////////////////////////////////////////////////////////
+    // NAVIGATION CONTROL
+    //////////////////////////////////////////////////////////
+    
+    func endNavigation() {
+        withAnimation {
+            isNavigating = false
+            showNavigationPanel = false
+            route = nil
+            showingRoute = false
+            navigationSteps = []
+            currentStepIndex = 0
+        }
+    }
+    
+    //////////////////////////////////////////////////////////
     // FAVORITES
     //////////////////////////////////////////////////////////
     
     func saveFavorite(item: MKMapItem) {
-        let coordinate = item.placemark.coordinate
+        let coordinate = item.location.coordinate
         let location = SavedLocation(
             name: item.name ?? "Unknown Place",
             coordinate: coordinate,
-            address: formatAddress(item.placemark)
+            address: formatAddress(item)
         )
         
         if !favoriteLocations.contains(where: { $0.id == location.id }) {
@@ -587,27 +647,33 @@ struct MapsView: View {
     }
     
     func isFavorited(item: MKMapItem) -> Bool {
-        let coordinate = item.placemark.coordinate
+        let coordinate = item.location.coordinate
         return favoriteLocations.contains { location in
             abs(location.coordinate.latitude - coordinate.latitude) < 0.0001 &&
             abs(location.coordinate.longitude - coordinate.longitude) < 0.0001
         }
     }
     
-    func formatAddress(_ placemark: CLPlacemark) -> String {
-        var addressParts: [String] = []
+    func formatAddress(_ item: MKMapItem) -> String {
+        var components: [String] = []
         
-        if let street = placemark.thoroughfare {
-            addressParts.append(street)
+        // Use the placemark API for address information
+        let placemark = item.placemark
+        
+        if let thoroughfare = placemark.thoroughfare {
+            components.append(thoroughfare)
         }
-        if let city = placemark.locality {
-            addressParts.append(city)
+        if let locality = placemark.locality {
+            components.append(locality)
         }
-        if let state = placemark.administrativeArea {
-            addressParts.append(state)
+        if let administrativeArea = placemark.administrativeArea {
+            components.append(administrativeArea)
+        }
+        if let postalCode = placemark.postalCode {
+            components.append(postalCode)
         }
         
-        return addressParts.joined(separator: ", ")
+        return components.joined(separator: ", ")
     }
 }
 
@@ -736,8 +802,8 @@ struct PlaceDetailCard: View {
     private var distance: String? {
         guard let userLocation = userLocation else { return nil }
         let itemLocation = CLLocation(
-            latitude: item.placemark.coordinate.latitude,
-            longitude: item.placemark.coordinate.longitude
+            latitude: item.location.coordinate.latitude,
+            longitude: item.location.coordinate.longitude
         )
         let meters = userLocation.distance(from: itemLocation)
         let miles = meters / 1609.34
@@ -798,7 +864,7 @@ struct PlaceDetailCard: View {
                     Text("Latitude")
                         .font(.system(size: 11))
                         .foregroundColor(.white.opacity(0.5))
-                    Text("\(item.placemark.coordinate.latitude, specifier: "%.6f")")
+                    Text("\(item.location.coordinate.latitude, specifier: "%.6f")")
                         .font(.system(size: 13, design: .monospaced))
                         .foregroundColor(.white)
                 }
@@ -807,7 +873,7 @@ struct PlaceDetailCard: View {
                     Text("Longitude")
                         .font(.system(size: 11))
                         .foregroundColor(.white.opacity(0.5))
-                    Text("\(item.placemark.coordinate.longitude, specifier: "%.6f")")
+                    Text("\(item.location.coordinate.longitude, specifier: "%.6f")")
                         .font(.system(size: 13, design: .monospaced))
                         .foregroundColor(.white)
                 }
@@ -927,22 +993,26 @@ struct PlaceDetailCard: View {
     }
     
     private func formatAddress() -> String? {
-        var parts: [String] = []
+        var components: [String] = []
         
-        if let street = item.placemark.thoroughfare {
-            parts.append(street)
+        // Use the placemark API for address information
+        let placemark = item.placemark
+        
+        if let thoroughfare = placemark.thoroughfare {
+            components.append(thoroughfare)
         }
-        if let city = item.placemark.locality {
-            parts.append(city)
+        if let locality = placemark.locality {
+            components.append(locality)
         }
-        if let state = item.placemark.administrativeArea {
-            parts.append(state)
+        if let administrativeArea = placemark.administrativeArea {
+            components.append(administrativeArea)
         }
-        if let zip = item.placemark.postalCode {
-            parts.append(zip)
+        if let postalCode = placemark.postalCode {
+            components.append(postalCode)
         }
         
-        return parts.isEmpty ? nil : parts.joined(separator: ", ")
+        let formatted = components.joined(separator: ", ")
+        return formatted.isEmpty ? nil : formatted
     }
     
     private func openInMaps() {
@@ -951,7 +1021,7 @@ struct PlaceDetailCard: View {
     
     private func shareLocation() {
         #if os(iOS)
-        let text = "\(item.name ?? "Location"): https://maps.apple.com/?ll=\(item.placemark.coordinate.latitude),\(item.placemark.coordinate.longitude)"
+        let text = "\(item.name ?? "Location"): https://maps.apple.com/?ll=\(item.location.coordinate.latitude),\(item.location.coordinate.longitude)"
         
         let activityVC = UIActivityViewController(
             activityItems: [text],
@@ -1086,4 +1156,249 @@ extension CLLocationCoordinate2D: Codable {
         try container.encode(longitude)
     }
 }
+
+//////////////////////////////////////////////////////////////
+// MARK: NAVIGATION PANEL
+//////////////////////////////////////////////////////////////
+
+struct NavigationPanel: View {
+    
+    let route: MKRoute?
+    let steps: [MKRoute.Step]
+    @Binding var currentStepIndex: Int
+    let onEndNavigation: () -> Void
+    let onNextStep: () -> Void
+    let onPreviousStep: () -> Void
+    
+    private var currentStep: MKRoute.Step? {
+        guard currentStepIndex < steps.count else { return nil }
+        return steps[currentStepIndex]
+    }
+    
+    private var totalDistance: String {
+        guard let route = route else { return "N/A" }
+        let miles = route.distance / 1609.34
+        return String(format: "%.1f mi", miles)
+    }
+    
+    private var estimatedTime: String {
+        guard let route = route else { return "N/A" }
+        let minutes = Int(route.expectedTravelTime / 60)
+        let hours = minutes / 60
+        let remainingMinutes = minutes % 60
+        
+        if hours > 0 {
+            return "\(hours)h \(remainingMinutes)m"
+        } else {
+            return "\(minutes)m"
+        }
+    }
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            
+            // Main instruction card
+            VStack(alignment: .leading, spacing: 12) {
+                
+                // Header with route info
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Navigation")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.cyan)
+                        
+                        HStack(spacing: 16) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.triangle.turn.up.right.diamond.fill")
+                                    .font(.system(size: 12))
+                                Text(totalDistance)
+                                    .font(.system(size: 14, weight: .semibold))
+                            }
+                            
+                            HStack(spacing: 4) {
+                                Image(systemName: "clock.fill")
+                                    .font(.system(size: 12))
+                                Text(estimatedTime)
+                                    .font(.system(size: 14, weight: .semibold))
+                            }
+                        }
+                        .foregroundColor(.white)
+                    }
+                    
+                    Spacer()
+                    
+                    Button {
+                        onEndNavigation()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 16))
+                            Text("End")
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                        .foregroundColor(.white.opacity(0.8))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(
+                            Capsule()
+                                .fill(Color.red.opacity(0.8))
+                        )
+                    }
+                }
+                
+                Divider()
+                    .background(Color.white.opacity(0.2))
+                
+                // Current step instruction
+                if let step = currentStep {
+                    HStack(alignment: .top, spacing: 12) {
+                        // Direction icon
+                        Image(systemName: getDirectionIcon(for: step.instructions))
+                            .font(.system(size: 32))
+                            .foregroundColor(.cyan)
+                            .frame(width: 50, height: 50)
+                            .background(
+                                Circle()
+                                    .fill(Color.cyan.opacity(0.2))
+                            )
+                        
+                        VStack(alignment: .leading, spacing: 6) {
+                            // Step number
+                            Text("Step \(currentStepIndex + 1) of \(steps.count)")
+                                .font(.system(size: 11))
+                                .foregroundColor(.white.opacity(0.6))
+                            
+                            // Instruction
+                            Text(step.instructions.isEmpty ? "Continue on route" : step.instructions)
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundColor(.white)
+                                .fixedSize(horizontal: false, vertical: true)
+                            
+                            // Distance for this step
+                            if step.distance > 0 {
+                                let stepMiles = step.distance / 1609.34
+                                let distanceText = stepMiles < 0.1 ?
+                                    "\(Int(step.distance)) meters" :
+                                    String(format: "%.1f mi", stepMiles)
+                                
+                                HStack(spacing: 4) {
+                                    Image(systemName: "arrow.right")
+                                        .font(.system(size: 10))
+                                    Text(distanceText)
+                                        .font(.system(size: 13))
+                                }
+                                .foregroundColor(.cyan)
+                            }
+                        }
+                    }
+                    
+                    // Navigation step controls
+                    HStack(spacing: 12) {
+                        Button {
+                            onPreviousStep()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "chevron.left")
+                                    .font(.system(size: 14, weight: .semibold))
+                                Text("Previous")
+                                    .font(.system(size: 13, weight: .medium))
+                            }
+                            .foregroundColor(currentStepIndex > 0 ? .white : .white.opacity(0.3))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color.white.opacity(currentStepIndex > 0 ? 0.15 : 0.05))
+                            )
+                        }
+                        .disabled(currentStepIndex == 0)
+                        
+                        Button {
+                            onNextStep()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Text("Next")
+                                    .font(.system(size: 13, weight: .medium))
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 14, weight: .semibold))
+                            }
+                            .foregroundColor(currentStepIndex < steps.count - 1 ? .white : .white.opacity(0.3))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color.white.opacity(currentStepIndex < steps.count - 1 ? 0.15 : 0.05))
+                            )
+                        }
+                        .disabled(currentStepIndex >= steps.count - 1)
+                    }
+                }
+            }
+            .padding(16)
+            .background(
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.15, green: 0.15, blue: 0.2),
+                                Color(red: 0.1, green: 0.1, blue: 0.15)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20)
+                            .stroke(
+                                LinearGradient(
+                                    colors: [Color.cyan.opacity(0.4), Color.blue.opacity(0.3)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                lineWidth: 1.5
+                            )
+                    )
+                    .shadow(color: .black.opacity(0.4), radius: 15)
+            )
+            .padding(.horizontal)
+            .padding(.top, 60) // Space for status bar and safe area
+        }
+    }
+    
+    private func getDirectionIcon(for instruction: String) -> String {
+        let lowercased = instruction.lowercased()
+        
+        if lowercased.contains("right") {
+            if lowercased.contains("slight") {
+                return "arrow.turn.up.right"
+            } else if lowercased.contains("sharp") {
+                return "arrow.turn.right.up"
+            } else {
+                return "arrow.turn.up.right"
+            }
+        } else if lowercased.contains("left") {
+            if lowercased.contains("slight") {
+                return "arrow.turn.up.left"
+            } else if lowercased.contains("sharp") {
+                return "arrow.turn.left.up"
+            } else {
+                return "arrow.turn.up.left"
+            }
+        } else if lowercased.contains("u-turn") || lowercased.contains("uturn") {
+            return "arrow.uturn.forward"
+        } else if lowercased.contains("straight") || lowercased.contains("continue") {
+            return "arrow.up"
+        } else if lowercased.contains("merge") {
+            return "arrow.triangle.merge"
+        } else if lowercased.contains("exit") {
+            return "arrow.uturn.right"
+        } else if lowercased.contains("arrive") || lowercased.contains("destination") {
+            return "mappin.circle.fill"
+        } else {
+            return "arrow.up.circle.fill"
+        }
+    }
+}
+
+// updated maps logic
 
